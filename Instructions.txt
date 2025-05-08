@@ -1,0 +1,2 @@
+To start graphhopper with the Netherlands routing data use the following command:
+java -Ddw.graphhopper.datareader.file=netherlands-latest.osm.pbf -jar web/target/graphhopper-web-8.0-SNAPSHOT.jar server config-example.yml
