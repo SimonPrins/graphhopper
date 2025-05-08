@@ -17,12 +17,16 @@
  */
 package com.graphhopper.routing.weighting.custom;
 
+import com.graphhopper.routing.Router;
 import com.graphhopper.routing.ev.BooleanEncodedValue;
 import com.graphhopper.routing.ev.DecimalEncodedValue;
 import com.graphhopper.routing.weighting.AbstractWeighting;
 import com.graphhopper.routing.weighting.TurnCostProvider;
+import com.graphhopper.search.KVStorage.KeyValue;
 import com.graphhopper.util.CustomModel;
 import com.graphhopper.util.EdgeIteratorState;
+import com.graphhopper.util.FetchMode;
+import com.graphhopper.util.PointList;
 
 /**
  * The CustomWeighting allows adjusting the edge weights relative to those we'd obtain for a given base flag encoder.
@@ -105,8 +109,17 @@ public final class CustomWeighting extends AbstractWeighting {
 
     @Override
     public double calcEdgeWeight(EdgeIteratorState edgeState, boolean reverse) {
+        PointList points = edgeState.fetchWayGeometry(FetchMode.ALL);
+        double lat = 52.31422176640961;
+        double lon = 5.33234976343488;
+        //boolean log = Math.pow(points.get(0).getLat() - lat, 2) + Math.pow(points.get(0).getLon() - lon, 2) <= 0.00004 || Math.pow(points.get(points.size() - 1).getLat() - lat, 2) + Math.pow(points.get(points.size() - 1).getLon() - lon, 2) <= 0.00004;
+        boolean log = false;
+        
         final double distance = edgeState.getDistance();
         double seconds = calcSeconds(distance, edgeState, reverse);
+        if (log) {
+            logDetails(edgeState, reverse);
+        }
         if (Double.isInfinite(seconds)) return Double.POSITIVE_INFINITY;
         // add penalty at start/stop/via points
         if (edgeState.get(EdgeIteratorState.UNFAVORED_EDGE)) seconds += headingPenaltySeconds;
@@ -119,10 +132,24 @@ public final class CustomWeighting extends AbstractWeighting {
     }
 
     double calcSeconds(double distance, EdgeIteratorState edgeState, boolean reverse) {
+        PointList points = edgeState.fetchWayGeometry(FetchMode.ALL);
+        double latCompare = 52.30356411126855;
+        double lonCompare = 5.32340338927091;
+        
+        //if (Math.pow(points.get(0).getLat() - latCompare, 2) + Math.pow(points.get(0).getLon() - lonCompare, 2) <= 0.001)
+            //System.out.println("[" + points.get(0).getLat() + "," + points.get(0).getLon()+ "," + points.get(points.size() - 1).getLat()+ "," + points.get(points.size() - 1).getLon() + "], //" + edgeState.getName());
+            //System.out.println("Considering edge: " + edgeState.getEdgeKey() + " (" + points.get(0).getLat() + "," + points.get(0).getLon() + ")" + edgeState.getName());
         if (reverse ? !edgeState.getReverse(accessEnc) : !edgeState.get(accessEnc))
             return Double.POSITIVE_INFINITY;
 
         double speed = edgeToSpeedMapping.get(edgeState, reverse);
+        if (Router.avoidEdgeKeys.contains(edgeState.getEdge()))
+            return Double.POSITIVE_INFINITY;
+        for (KeyValue pair : edgeState.getKeyValues()) {
+            if ("microcar".equals(pair.getKey()) && "no".equals(pair.getValue())) {
+                return Double.POSITIVE_INFINITY;
+            }
+        }
         if (speed > maxSpeed * SPEED_CONV)
             throw new IllegalStateException("for " + getName() + " speed <= maxSpeed is violated, " + speed + " <= " + maxSpeed * SPEED_CONV);
         if (speed == 0)
@@ -131,6 +158,12 @@ public final class CustomWeighting extends AbstractWeighting {
             throw new IllegalArgumentException("Speed cannot be negative");
 
         return distance / speed * SPEED_CONV;
+    }
+    
+    public void logDetails(EdgeIteratorState edgeState, boolean reverse) {
+        double speed = edgeToSpeedMapping.get(edgeState, reverse);
+        boolean avoidEdge = Router.avoidEdgeKeys.contains(edgeState.getEdge());
+        System.out.println("speed: " + speed + " avoidEdge: " + avoidEdge);
     }
 
     @Override
