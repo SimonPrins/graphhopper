@@ -20,6 +20,7 @@ package com.graphhopper.storage.index;
 import com.carrotsearch.hppc.IntHashSet;
 import com.graphhopper.routing.util.AllEdgesIterator;
 import com.graphhopper.routing.util.EdgeFilter;
+import com.graphhopper.search.KVStorage;
 import com.graphhopper.storage.Directory;
 import com.graphhopper.storage.Graph;
 import com.graphhopper.storage.NodeAccess;
@@ -281,6 +282,65 @@ public class LocationIndexTree implements LocationIndex {
                 EdgeIteratorState edgeIteratorState = graph.getEdgeIteratorStateForKey(edgeId * 2);
                 if (seenEdges.add(edgeId) && edgeFilter.accept(edgeIteratorState)) { // TODO: or reverse?
                     traverseEdge(queryLat, queryLon, edgeIteratorState, (node, normedDist, wayIndex, pos) -> {
+                        if (normedDist < closestMatch.getQueryDistance()) {
+                            closestMatch.setQueryDistance(normedDist);
+                            closestMatch.setClosestNode(node);
+                            closestMatch.setClosestEdge(edgeIteratorState.detach(false));
+                            closestMatch.setWayIndex(wayIndex);
+                            closestMatch.setSnappedPosition(pos);
+                        }
+                    });
+                }
+            });
+            if (closestMatch.isValid()) {
+                // Check if we can stop...
+                double rMin = calculateRMin(queryLat, queryLon, iteration);
+                double minDistance = DIST_PLANE.calcDenormalizedDist(closestMatch.getQueryDistance());
+                if (minDistance < rMin) {
+                    break; // We can (approximately?) guarantee that no closer edges are anywhere else
+                }
+            }
+        }
+
+        if (closestMatch.isValid()) {
+            closestMatch.calcSnappedPoint(DIST_PLANE);
+            closestMatch.setQueryDistance(DIST_PLANE.calcDist(closestMatch.getSnappedPoint().lat, closestMatch.getSnappedPoint().lon, queryLat, queryLon));
+        }
+        return closestMatch;
+    }
+    
+    public Snap findClosestPreferringLargeRoads(final double queryLat, final double queryLon, final EdgeFilter edgeFilter) {
+        if (isClosed())
+            throw new IllegalStateException("You need to create a new LocationIndex instance as it is already closed");
+
+        final Snap closestMatch = new Snap(queryLat, queryLon);
+        IntHashSet seenEdges = new IntHashSet();
+        for (int iteration = 0; iteration < maxRegionSearch; iteration++) {
+            lineIntIndex.findEdgeIdsInNeighborhood(queryLat, queryLon, iteration, edgeId -> {
+                EdgeIteratorState edgeIteratorState = graph.getEdgeIteratorStateForKey(edgeId * 2);
+                if (seenEdges.add(edgeId) && edgeFilter.accept(edgeIteratorState)) { // TODO: or reverse?
+                    traverseEdge(queryLat, queryLon, edgeIteratorState, (node, normedDist, wayIndex, pos) -> {
+                        
+                        double penalty = 0;
+                        for (KVStorage.KeyValue pair : edgeIteratorState.getKeyValues()) {
+                            if ("highway".equals(pair.getKey())) {
+                                if ("tertiary".equals(pair.getValue())
+                                        || "tertiary_link".equals(pair.getValue())
+                                        || "unclassified".equals(pair.getValue())
+                                        || "residential".equals(pair.getValue())
+                                        || "service".equals(pair.getValue())
+                                        || "track".equals(pair.getValue())
+                                        || "cycleway".equals(pair.getValue())
+                                        || "living_street".equals(pair.getValue())
+                                    )
+                                    penalty = 1E-12;
+                                else if ("secondary".equals(pair.getValue())
+                                        || "secondary_link".equals(pair.getValue())
+                                    )
+                                    penalty = 5E-13;
+                            }
+                        }
+                        normedDist += penalty;
                         if (normedDist < closestMatch.getQueryDistance()) {
                             closestMatch.setQueryDistance(normedDist);
                             closestMatch.setClosestNode(node);
