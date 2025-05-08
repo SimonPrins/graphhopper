@@ -18,9 +18,12 @@
 package com.graphhopper.routing;
 
 import com.carrotsearch.hppc.IntObjectMap;
+import com.graphhopper.routing.ev.OSMWayID;
 import com.graphhopper.routing.util.EdgeFilter;
 import com.graphhopper.routing.util.TraversalMode;
 import com.graphhopper.routing.weighting.Weighting;
+import com.graphhopper.routing.weighting.custom.CustomWeighting;
+import com.graphhopper.search.KVStorage.KeyValue;
 import com.graphhopper.storage.Graph;
 import com.graphhopper.storage.NodeAccess;
 import com.graphhopper.util.EdgeExplorer;
@@ -31,6 +34,9 @@ import com.graphhopper.util.GHUtility;
 import java.util.PriorityQueue;
 
 import static com.graphhopper.util.EdgeIterator.ANY_EDGE;
+import com.graphhopper.util.FetchMode;
+import com.graphhopper.util.PointList;
+import java.util.List;
 
 /**
  * Common subclass for bidirectional algorithms.
@@ -151,12 +157,37 @@ public abstract class AbstractNonCHBidirAlgo extends AbstractBidirAlgo implement
 
     private void fillEdges(SPTEntry currEdge, PriorityQueue<SPTEntry> prioQueue, IntObjectMap<SPTEntry> bestWeightMap, boolean reverse) {
         EdgeIterator iter = edgeExplorer.setBaseNode(currEdge.adjNode);
+
         while (iter.next()) {
-            if (!accept(iter, currEdge.edge))
+            PointList points = iter.fetchWayGeometry(FetchMode.ALL);
+            /*
+            double lat1 = 52.3067293;
+            double lon1 = 5.3406612;
+            double lat2 = 52.3121513;
+            double lon2 = 5.3370214;
+*/
+            double lat1 = 52.3136313;
+            double lon1 = 5.3336832;
+            double lat2 = 52.3136925;
+            double lon2 = 5.3335118;
+            if (
+                ((Math.pow(points.get(0).getLat() - lat1, 2) + Math.pow(points.get(0).getLon() - lon1, 2) <= 0.00001) || (Math.pow(points.get(0).getLat() - lat2, 2) + Math.pow(points.get(0).getLon() - lon2, 2) <= 0.00001))
+                && ((Math.pow(points.get(points.size() - 1).getLat() - lat1, 2) + Math.pow(points.get(points.size() - 1).getLon() - lon1, 2) <= 0.00001) || (Math.pow(points.get(points.size() - 1).getLat() - lat2, 2) + Math.pow(points.get(points.size() - 1).getLon() - lon2, 2) <= 0.00001))
+                    )
+                System.out.println("Found way: ["  + points.get(0).getLat() + "," + points.get(0).getLon()+ "," + points.get(points.size() - 1).getLat()+ "," + points.get(points.size() - 1).getLon() + "],");
+            double lat = 52.31422176640961;
+            double lon = 5.33234976343488;
+            boolean log = Math.pow(points.get(0).getLat() - lat, 2) + Math.pow(points.get(0).getLon() - lon, 2) <= 0.00004 || Math.pow(points.get(points.size() - 1).getLat() - lat, 2) + Math.pow(points.get(points.size() - 1).getLon() - lon, 2) <= 0.00004;
+            if (log)
+                System.out.println("["  + points.get(0).getLat() + "," + points.get(0).getLon()+ "," + points.get(points.size() - 1).getLat()+ "," + points.get(points.size() - 1).getLon() + "], // reverse: " + reverse + " name: " + iter.getName() + " toNode: " + iter.getAdjNode() + " fromNode: " + currEdge.adjNode);
+            if (!accept(iter, currEdge.edge)) {
+                if (log) System.out.println("Not accepted.");
                 continue;
+            }
 
             final double weight = calcWeight(iter, currEdge, reverse);
             if (Double.isInfinite(weight)) {
+                if (log) System.out.println("Infinite weight.");
                 continue;
             }
             final int traversalId = traversalMode.createTraversalId(iter, reverse);
@@ -180,7 +211,8 @@ public abstract class AbstractNonCHBidirAlgo extends AbstractBidirAlgo implement
                         bestFwdEntry = entry;
             } else
                 continue;
-
+            if (log)
+                System.out.println("["  + points.get(0).getLat() + "," + points.get(0).getLon()+ "," + points.get(points.size() - 1).getLat()+ "," + points.get(points.size() - 1).getLon() + "], // totalWeight: " + weight + " edgeWeight" + (weight - currEdge.getWeightOfVisitedPath()) + " edgeLength: " + iter.getDistance() + " reverse: " + reverse + " name: " + iter.getName());
             if (updateBestPath) {
                 // only needed for edge-based -> skip the calculation and use dummy value otherwise
                 double edgeWeight = traversalMode.isEdgeBased() ? weighting.calcEdgeWeight(iter, reverse) : Double.POSITIVE_INFINITY;
