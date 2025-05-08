@@ -5,12 +5,23 @@ import com.graphhopper.reader.ReaderWay;
 import com.graphhopper.reader.osm.conditional.ConditionalOSMTagInspector;
 import com.graphhopper.reader.osm.conditional.ConditionalTagInspector;
 import com.graphhopper.reader.osm.conditional.DateRangeParser;
+import com.graphhopper.routing.Router;
+import static com.graphhopper.routing.Router.avoidEdgeKeys;
 import com.graphhopper.routing.ev.BooleanEncodedValue;
 import com.graphhopper.routing.ev.EdgeIntAccess;
 import com.graphhopper.routing.util.TransportationMode;
 import com.graphhopper.storage.IntsRef;
+import com.graphhopper.storage.index.Snap;
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.net.HttpURLConnection;
+import java.net.MalformedURLException;
+import java.net.ProtocolException;
+import java.net.URL;
 
 import java.util.*;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 
 public abstract class AbstractAccessParser implements TagParser {
     static final Collection<String> ONEWAYS = Arrays.asList("yes", "true", "1", "-1");
@@ -98,6 +109,8 @@ public abstract class AbstractAccessParser implements TagParser {
     public boolean isBarrier(ReaderNode node) {
         // note that this method will be only called for certain nodes as defined by OSMReader!
         String firstValue = node.getFirstPriorityTag(restrictions);
+        if (node.hasTag("microcar", "yes"))
+            return false;
         if (restrictedValues.contains(firstValue) || node.hasTag("locked", "yes"))
             return true;
         else if (intendedValues.contains(firstValue))
@@ -107,7 +120,7 @@ public abstract class AbstractAccessParser implements TagParser {
         else
             return blockFords && node.hasTag("ford", "yes");
     }
-
+    
     public final BooleanEncodedValue getAccessEnc() {
         return accessEnc;
     }
