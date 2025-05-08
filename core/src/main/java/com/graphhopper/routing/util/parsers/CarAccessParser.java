@@ -77,6 +77,10 @@ public class CarAccessParser extends AbstractAccessParser implements TagParser {
     }
 
     public WayAccess getAccess(ReaderWay way) {
+        String microcarValue = way.getTag("microcar");
+        if ("yes".equals(microcarValue)) {
+            return WayAccess.WAY;
+        }
         // TODO: Ferries have conditionals, like opening hours or are closed during some time in the year
         String highwayValue = way.getTag("highway");
         String firstValue = way.getFirstPriorityTag(restrictions);
