@@ -23,6 +23,8 @@ import com.graphhopper.GHRequest;
 import com.graphhopper.GHResponse;
 import com.graphhopper.ResponsePath;
 import com.graphhopper.config.Profile;
+import com.graphhopper.json.Statement;
+import com.graphhopper.json.Statement.Op;
 import com.graphhopper.routing.ch.CHRoutingAlgorithmFactory;
 import com.graphhopper.routing.ev.BooleanEncodedValue;
 import com.graphhopper.routing.ev.EncodedValueLookup;
@@ -50,10 +52,20 @@ import com.graphhopper.util.shapes.GHPoint;
 import java.util.*;
 
 import static com.graphhopper.routing.weighting.Weighting.INFINITE_U_TURN_COSTS;
+import com.graphhopper.search.KVStorage.KeyValue;
+import com.graphhopper.storage.index.LocationIndexTree;
 import static com.graphhopper.util.DistanceCalcEarth.DIST_EARTH;
 import static com.graphhopper.util.Parameters.Algorithms.ALT_ROUTE;
 import static com.graphhopper.util.Parameters.Algorithms.ROUND_TRIP;
 import static com.graphhopper.util.Parameters.Routing.*;
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.net.HttpURLConnection;
+import java.net.MalformedURLException;
+import java.net.ProtocolException;
+import java.net.URL;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 
 public class Router {
     protected final BaseGraph graph;
@@ -68,6 +80,7 @@ public class Router {
     protected final Map<String, LandmarkStorage> landmarks;
     protected final boolean chEnabled;
     protected final boolean lmEnabled;
+    public static Set<Integer> avoidEdgeKeys = new HashSet<>();
 
     public Router(BaseGraph graph, EncodingManager encodingManager, LocationIndex locationIndex,
                   Map<String, Profile> profilesByName, PathDetailsBuilderFactory pathDetailsBuilderFactory,
@@ -239,6 +252,9 @@ public class Router {
         DirectedEdgeFilter directedEdgeFilter = solver.createDirectedEdgeFilter();
         List<Snap> snaps = ViaRouting.lookup(encodingManager, request.getPoints(), solver.createSnapFilter(), locationIndex,
                 request.getSnapPreventions(), request.getPointHints(), directedEdgeFilter, request.getHeadings());
+        updateAvoidEdgeKeys(solver);
+        if (avoidEdgeKeys.isEmpty())
+            throw new RuntimeException("Unable to calculate route. Signs information not found.");
         ghRsp.addDebugInfo("idLookup:" + sw.stop().getSeconds() + "s");
         QueryGraph queryGraph = QueryGraph.create(graph, snaps);
         PathCalculator pathCalculator = solver.createPathCalculator(queryGraph);
@@ -271,6 +287,12 @@ public class Router {
         DirectedEdgeFilter directedEdgeFilter = solver.createDirectedEdgeFilter();
         List<Snap> snaps = ViaRouting.lookup(encodingManager, request.getPoints(), solver.createSnapFilter(), locationIndex,
                 request.getSnapPreventions(), request.getPointHints(), directedEdgeFilter, request.getHeadings());
+        for (Snap snap : snaps) {
+            PointList points = snap.getClosestEdge().fetchWayGeometry(FetchMode.ALL);
+        }
+        updateAvoidEdgeKeys(solver);
+        if (avoidEdgeKeys.isEmpty())
+            throw new RuntimeException("Unable to calculate route. Signs information not found.");
         ghRsp.addDebugInfo("idLookup:" + sw.stop().getSeconds() + "s");
         // (base) query graph used to resolve headings, curbsides etc. this is not necessarily the same thing as
         // the (possibly implementation specific) query graph used by PathCalculator
@@ -280,7 +302,7 @@ public class Router {
         boolean forceCurbsides = getForceCurbsides(request.getHints());
         ViaRouting.Result result = ViaRouting.calcPaths(request.getPoints(), queryGraph, snaps, directedEdgeFilter,
                 pathCalculator, request.getCurbsides(), forceCurbsides, request.getHeadings(), passThrough);
-
+        
         if (request.getPoints().size() != result.paths.size() + 1)
             throw new RuntimeException("There should be exactly one more point than paths. points:" + request.getPoints().size() + ", paths:" + result.paths.size());
 
@@ -291,6 +313,101 @@ public class Router {
         ghRsp.getHints().putObject("visited_nodes.sum", result.visitedNodes);
         ghRsp.getHints().putObject("visited_nodes.average", (float) result.visitedNodes / (snaps.size() - 1));
         return ghRsp;
+    }
+    
+    private void updateAvoidEdgeKeys(Solver solver) {
+        if (!avoidEdgeKeys.isEmpty())
+            return;
+        URL url;
+        try {
+            url = new URL("https://www.minikaart.nl:8080/routing/signs/");
+            HttpURLConnection con = (HttpURLConnection) url.openConnection();
+            con.setRequestMethod("GET");
+            con.setConnectTimeout(5000);
+            con.setReadTimeout(5000);
+            con.getResponseCode();
+            BufferedReader in = new BufferedReader(
+                new java.io.InputStreamReader(con.getInputStream()));
+            String inputLine;
+            StringBuffer content = new StringBuffer();
+            while ((inputLine = in.readLine()) != null) {
+                content.append(inputLine);
+            }
+            in.close();
+            con.disconnect();
+            for (int pos = 1; pos < content.length();) {
+                if (content.charAt(pos) == ']')
+                    break;
+                pos = parseSign(content, pos, solver);
+            }
+        } catch (MalformedURLException ex) {
+            Logger.getLogger(Router.class.getName()).log(Level.SEVERE, null, ex);
+        } catch (ProtocolException ex) {
+            Logger.getLogger(Router.class.getName()).log(Level.SEVERE, null, ex);
+        } catch (IOException ex) {
+            Logger.getLogger(Router.class.getName()).log(Level.SEVERE, null, ex);
+        }
+    }
+    
+    private int parseSign(StringBuffer content, int pos, Solver solver) {
+        pos = parseCharacter(content, pos, '{').first;
+        double lat = 0;
+        double lon = 0;
+        while (content.charAt(pos) != '}') {
+            Tuple2<Integer, String> keyResult = parseString(content, pos);
+            pos = keyResult.first;
+            pos = parseCharacter(content, pos, ':').first;
+            int startPos = pos;
+            while (content.charAt(pos) != '}' && content.charAt(pos) != ',')
+                pos++;
+            String value = content.substring(startPos, pos);
+            if (keyResult.second.equals("lat"))
+                lat = Double.parseDouble(value);
+            else if (keyResult.second.equals("lng"))
+                lon = Double.parseDouble(value);
+            pos = parseCharacter(content, pos, ',').first;
+        }
+        pos = parseCharacter(content, pos, '}').first;
+        pos = parseCharacter(content, pos, ',').first;
+        if (lat != 0 && lon != 0) {
+            Snap avoidSnap = ((LocationIndexTree)locationIndex).findClosestPreferringLargeRoads(lat, lon, solver.createSnapFilter());
+            boolean allowMicrocars = false;
+            for (KeyValue pair : avoidSnap.getClosestEdge().getKeyValues()) {
+                if ("microcar".equals(pair.getKey()) && "yes".equals(pair.getValue())) {
+                    allowMicrocars = true;
+                }
+            }
+            if (!allowMicrocars)
+                avoidEdgeKeys.add(avoidSnap.getClosestEdge().getEdge());
+        }
+        return pos;
+    }
+    private Tuple2<Integer, Boolean> parseCharacter(StringBuffer content, int pos, char c) {
+        while (Character.isWhitespace(content.charAt(pos)))
+            pos++;
+        Boolean success = false;
+        if (content.charAt(pos) == c) {
+            success = true;
+            pos++;
+        }
+        return new Tuple2(pos, success);
+    }
+    public class Tuple2<K, V> {
+        public K first;
+        public V second;
+
+        public Tuple2(K first, V second){
+            this.first = first;
+            this.second = second;
+        }
+    }
+    private Tuple2<Integer, String> parseString(StringBuffer content, int pos) {
+        pos = parseCharacter(content, pos, '\"').first;
+        int startPos = pos;
+        while (content.charAt(pos) != '\"')
+            pos++;
+        pos++;
+        return new Tuple2(pos, content.substring(startPos, pos - 1));
     }
 
     private PathMerger createPathMerger(GHRequest request, Weighting weighting, Graph graph) {
