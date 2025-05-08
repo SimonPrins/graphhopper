@@ -40,7 +40,6 @@ import java.io.InputStreamReader;
 import java.io.Reader;
 import java.net.URL;
 import java.util.*;
-import java.util.concurrent.Callable;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
@@ -180,7 +179,7 @@ public class LMPreparationHandler {
             final int count = i + 1;
             final String name = prepare.getLMConfig().getName();
             prepareRunnables.add(() -> {
-                LOGGER.info(count + "/" + lmConfigs.size() + " calling LM prepare.doWork for " + prepare.getLMConfig().getWeighting() + " ... (" + getMemInfo() + ")");
+                LOGGER.info(count + "/" + lmConfigs.size() + " calling LM prepare.doWork for " + prepare.getLMConfig().getName() + " ... (" + getMemInfo() + ")");
                 Thread.currentThread().setName(name);
                 prepare.doWork();
                 if (closeEarly)

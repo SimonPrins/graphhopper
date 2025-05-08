@@ -1,12 +1,11 @@
 package com.graphhopper.routing.util.parsers;
 
 import com.graphhopper.routing.ev.*;
-import com.graphhopper.util.PMap;
 
 public class MountainBikeAverageSpeedParser extends BikeCommonAverageSpeedParser {
 
-    public MountainBikeAverageSpeedParser(EncodedValueLookup lookup, PMap properties) {
-        this(lookup.getDecimalEncodedValue(VehicleSpeed.key(properties.getString("name", "mtb"))),
+    public MountainBikeAverageSpeedParser(EncodedValueLookup lookup) {
+        this(lookup.getDecimalEncodedValue(VehicleSpeed.key("mtb")),
                 lookup.getEnumEncodedValue(Smoothness.KEY, Smoothness.class),
                 lookup.getDecimalEncodedValue(FerrySpeed.KEY));
     }
@@ -27,6 +26,7 @@ public class MountainBikeAverageSpeedParser extends BikeCommonAverageSpeedParser
         setSurfaceSpeed("fine_gravel", 18);
         setSurfaceSpeed("grass", 14);
         setSurfaceSpeed("grass_paver", 14);
+        setSurfaceSpeed("compacted", 16);
         setSurfaceSpeed("gravel", 16);
         setSurfaceSpeed("ground", 16);
         setSurfaceSpeed("ice", MIN_SPEED);

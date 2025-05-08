@@ -19,7 +19,6 @@ import com.graphhopper.storage.RoutingCHGraphImpl;
 import com.graphhopper.storage.index.LocationIndexTree;
 import com.graphhopper.storage.index.Snap;
 import com.graphhopper.util.GHUtility;
-import com.graphhopper.util.Helper;
 import com.graphhopper.util.PMap;
 import org.junit.jupiter.api.extension.ExtensionContext;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -169,7 +168,7 @@ public class RandomCHRoutingTest {
             }
             if (strictViolations.size() > 0.05 * numQueries) {
                 fail("Too many strict violations: " + strictViolations.size() + "/" + numQueries + "\n" +
-                        Helper.join("\n", strictViolations));
+                        String.join("\n", strictViolations));
             }
         }
     }
