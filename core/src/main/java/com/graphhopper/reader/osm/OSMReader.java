@@ -32,6 +32,7 @@ import com.graphhopper.reader.dem.EdgeElevationSmoothingRamer;
 import com.graphhopper.reader.dem.EdgeSampling;
 import com.graphhopper.reader.dem.ElevationProvider;
 import com.graphhopper.routing.OSMReaderConfig;
+import com.graphhopper.routing.Router;
 import com.graphhopper.routing.ev.Country;
 import com.graphhopper.routing.ev.EdgeIntAccess;
 import com.graphhopper.routing.ev.State;
@@ -63,7 +64,13 @@ import java.util.stream.Collectors;
 import static com.graphhopper.search.KVStorage.KeyValue.*;
 import static com.graphhopper.util.GHUtility.OSM_WARNING_LOGGER;
 import static com.graphhopper.util.Helper.nf;
+import java.io.BufferedReader;
+import java.net.HttpURLConnection;
+import java.net.MalformedURLException;
+import java.net.ProtocolException;
+import java.net.URL;
 import static java.util.Collections.emptyList;
+import java.util.logging.Level;
 
 /**
  * Parses an OSM file (xml, zipped xml or pbf) and creates a graph from it. The OSM file is actually read twice.
@@ -100,6 +107,8 @@ public class OSMReader {
     private GHLongLongHashMap osmWayIdToRelationFlagsMap = new GHLongLongHashMap(200, .5f);
     private WayToEdgesMap restrictedWaysToEdgesMap = new WayToEdgesMap();
     private List<ReaderRelation> restrictionRelations = new ArrayList<>();
+    
+    private HashMap<Long, HashMap<String, String>> overrideTags = new HashMap<>();
 
     public OSMReader(BaseGraph baseGraph, OSMParsers osmParsers, OSMReaderConfig config) {
         this.baseGraph = baseGraph;
@@ -366,6 +375,48 @@ public class OSMReader {
             distance = maxDistance;
         }
 
+        updateOverrideTags();
+        double lat = 52.69333743899641;
+        double lon = 5.281854927969998;
+        //if (Math.pow(pointList.get(0).getLat() - lat, 2) + Math.pow(pointList.get(0).getLon() - lon, 2) <= 0.0001) {
+        //    System.out.println("[" + pointList.getLat(0) + "," + pointList.getLon(0) + "," + pointList.getLat(pointList.size() - 1) + "," + pointList.getLon(pointList.size() - 1) + "], //" + way.getId());
+        //}
+        if (way.getId() == 60064634) {
+            System.out.println("[" + pointList.getLat(0) + "," + pointList.getLon(0) + "," + pointList.getLat(pointList.size() - 1) + "," + pointList.getLon(pointList.size() - 1) + "], //" + way.getId());
+        }
+        if (overrideTags.containsKey(way.getId())) {
+            for (String key : overrideTags.get(way.getId()).keySet()) {
+                if (way.getId() == 60064634) {
+                    System.out.println("Setting tag " + key + " to " + overrideTags.get(way.getId()).get(key));
+                }
+                way.setTag(key, overrideTags.get(way.getId()).get(key));
+            }
+        }
+        List<KVStorage.KeyValue> keyValues = way.getTag("key_values", Collections.emptyList());
+        boolean microcarSet = false;
+        boolean highwaySet = false;
+        for (int i = 0; i < keyValues.size(); i++) {
+            if ("microcar".equals(keyValues.get(i).key))
+                microcarSet = true;
+            if ("highway".equals(keyValues.get(i).key))
+                highwaySet = true;
+        }
+        if (way.getId() == 60064634) {
+            System.out.println("microcar: " + way.getTag("microcar"));
+        }
+        //if (microcarSet && "yes".equals(way.getTag("microcar"))) {
+        //    System.out.println("[" + pointList.getLat(0) + "," + pointList.getLon(0) + "," + pointList.getLat(pointList.size() - 1) + "," + pointList.getLon(pointList.size() - 1) + "], //" + way.getId());
+        //}
+        if (!microcarSet && ("yes".equals(way.getTag("microcar")) || overrideTags.containsKey(way.getId()))) {
+            keyValues.add(new KVStorage.KeyValue("microcar", way.getTag("microcar")));
+            way.setTag("key_values", keyValues);
+        }
+        String highwayTag = way.getTag("highway");
+        if (!highwaySet && highwayTag != null) {
+            keyValues.add(new KVStorage.KeyValue("highway", highwayTag));
+            way.setTag("key_values", keyValues);
+        }
+        
         setArtificialWayTags(pointList, way, distance, nodeTags);
         IntsRef relationFlags = getRelFlagsMap(way.getId());
         EdgeIteratorState edge = baseGraph.edge(fromIndex, toIndex).setDistance(distance);
@@ -386,6 +437,99 @@ public class OSMReader {
         checkDistance(edge);
         restrictedWaysToEdgesMap.putIfReserved(way.getId(), edge.getEdge());
     }
+    private void updateOverrideTags() {
+        if (!overrideTags.isEmpty())
+            return;
+        URL url;
+        try {
+            url = new URL("https://www.minikaart.nl:8080/routing/road-tag-modifications/");
+            //url = new URL("http://localhost:8080/routing/road-tag-modifications/");
+            HttpURLConnection con = (HttpURLConnection) url.openConnection();
+            con.setRequestMethod("GET");
+            con.setConnectTimeout(5000);
+            con.setReadTimeout(5000);
+            con.getResponseCode();
+            BufferedReader in = new BufferedReader(
+                new java.io.InputStreamReader(con.getInputStream()));
+            String inputLine;
+            StringBuffer content = new StringBuffer();
+            while ((inputLine = in.readLine()) != null) {
+                content.append(inputLine);
+            }
+            in.close();
+            con.disconnect();
+            for (int pos = 1; pos < content.length();) {
+                if (content.charAt(pos) == ']')
+                    break;
+                pos = parseOverrideTag(content, pos);
+            }
+        } catch (MalformedURLException ex) {
+            java.util.logging.Logger.getLogger(Router.class.getName()).log(Level.SEVERE, null, ex);
+        } catch (ProtocolException ex) {
+            java.util.logging.Logger.getLogger(Router.class.getName()).log(Level.SEVERE, null, ex);
+        } catch (IOException ex) {
+            java.util.logging.Logger.getLogger(Router.class.getName()).log(Level.SEVERE, null, ex);
+        }
+    }
+    
+    private int parseOverrideTag(StringBuffer content, int pos) {
+        pos = parseCharacter(content, pos, '{').first;
+        Long roadId = 0l;
+        String tag = null, val = null;
+        while (content.charAt(pos) != '}') {
+            Tuple2<Integer, String> keyResult = parseString(content, pos);
+            pos = keyResult.first;
+            pos = parseCharacter(content, pos, ':').first;
+            int startPos = pos;
+            while (content.charAt(pos) != '}' && content.charAt(pos) != ',')
+                pos++;
+            String value = content.substring(startPos, pos);
+            if (keyResult.second.equals("roadId"))
+                roadId = Long.valueOf(value);
+            else if (keyResult.second.equals("tag"))
+                tag = value.replace("\"", "");
+            else if (keyResult.second.equals("value"))
+                val = value.replace("\"", "");
+            pos = parseCharacter(content, pos, ',').first;
+        }
+        pos = parseCharacter(content, pos, '}').first;
+        pos = parseCharacter(content, pos, ',').first;
+        if (roadId != 0 && tag != null && val != null) {
+            if (!overrideTags.containsKey(roadId)) {
+                overrideTags.put(roadId, new HashMap<>());
+            }
+            overrideTags.get(roadId).put(tag, val);
+        }
+        return pos;
+    }
+    private Tuple2<Integer, Boolean> parseCharacter(StringBuffer content, int pos, char c) {
+        while (Character.isWhitespace(content.charAt(pos)))
+            pos++;
+        Boolean success = false;
+        if (content.charAt(pos) == c) {
+            success = true;
+            pos++;
+        }
+        return new Tuple2(pos, success);
+    }
+    public class Tuple2<K, V> {
+        public K first;
+        public V second;
+
+        public Tuple2(K first, V second){
+            this.first = first;
+            this.second = second;
+        }
+    }
+    private Tuple2<Integer, String> parseString(StringBuffer content, int pos) {
+        pos = parseCharacter(content, pos, '\"').first;
+        int startPos = pos;
+        while (content.charAt(pos) != '\"')
+            pos++;
+        pos++;
+        return new Tuple2(pos, content.substring(startPos, pos - 1));
+    }
+
 
     private void checkCoordinates(int nodeIndex, GHPoint point) {
         final double tolerance = 1.e-6;
