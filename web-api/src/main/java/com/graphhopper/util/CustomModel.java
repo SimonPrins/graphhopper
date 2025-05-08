@@ -17,6 +17,7 @@
  */
 package com.graphhopper.util;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
 import com.graphhopper.jackson.CustomModelAreasDeserializer;
 import com.graphhopper.json.Statement;
@@ -31,6 +32,7 @@ public class CustomModel {
     // 'Double' instead of 'double' is required to know if it was 0 or not specified in the request.
     private Double distanceInfluence;
     private Double headingPenalty;
+    @JsonIgnore
     private boolean internal;
     private List<Statement> speedStatements = new ArrayList<>();
     private List<Statement> priorityStatements = new ArrayList<>();
@@ -40,6 +42,7 @@ public class CustomModel {
     }
 
     public CustomModel(CustomModel toCopy) {
+        this.internal = false; // true only when explicitly set
         this.headingPenalty = toCopy.headingPenalty;
         this.distanceInfluence = toCopy.distanceInfluence;
         // do not copy "internal" boolean
@@ -159,7 +162,8 @@ public class CustomModel {
     private String createContentString() {
         // used to check against stored custom models, see #2026
         return "distanceInfluence=" + distanceInfluence + "|headingPenalty=" + headingPenalty
-                + "|speedStatements=" + speedStatements + "|priorityStatements=" + priorityStatements + "|areas=" + areas;
+                + "|speedStatements=" + speedStatements + "|priorityStatements=" + priorityStatements
+                + "|areas=" + areas;
     }
 
     /**
@@ -167,10 +171,10 @@ public class CustomModel {
      * queryModel is null.
      */
     public static CustomModel merge(CustomModel baseModel, CustomModel queryModel) {
-        if (queryModel == null) return baseModel;
         // avoid changing the specified CustomModel via deep copy otherwise the server-side CustomModel would be
         // modified (same problem if queryModel would be used as target)
         CustomModel mergedCM = new CustomModel(baseModel);
+        if (queryModel == null) return mergedCM;
 
         if (queryModel.getDistanceInfluence() != null)
             mergedCM.distanceInfluence = queryModel.distanceInfluence;
@@ -178,8 +182,8 @@ public class CustomModel {
             mergedCM.headingPenalty = queryModel.headingPenalty;
         mergedCM.speedStatements.addAll(queryModel.getSpeed());
         mergedCM.priorityStatements.addAll(queryModel.getPriority());
-        mergedCM.addAreas(queryModel.getAreas());
 
+        mergedCM.addAreas(queryModel.getAreas());
         return mergedCM;
     }
 }

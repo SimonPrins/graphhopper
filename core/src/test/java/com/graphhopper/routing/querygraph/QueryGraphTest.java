@@ -25,6 +25,7 @@ import com.graphhopper.routing.util.EdgeFilter;
 import com.graphhopper.routing.util.EncodingManager;
 import com.graphhopper.routing.weighting.SpeedWeighting;
 import com.graphhopper.routing.weighting.Weighting;
+import com.graphhopper.search.KVStorage;
 import com.graphhopper.storage.*;
 import com.graphhopper.storage.index.LocationIndexTree;
 import com.graphhopper.storage.index.Snap;
@@ -34,14 +35,12 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
-import java.util.Arrays;
-import java.util.Collections;
-import java.util.LinkedHashSet;
-import java.util.List;
+import java.util.*;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
 import static com.graphhopper.storage.index.Snap.Position.*;
+import static com.graphhopper.util.DistancePlaneProjection.DIST_PLANE;
 import static com.graphhopper.util.EdgeIteratorState.UNFAVORED_EDGE;
 import static com.graphhopper.util.GHUtility.updateDistancesFor;
 import static org.junit.jupiter.api.Assertions.*;
@@ -985,6 +984,134 @@ public class QueryGraphTest {
                         queryGraph.getEdgeIteratorState(i, Integer.MIN_VALUE).toString()).collect(Collectors.joining(",")));
     }
 
+    @Test
+    public void testExternalEV() {
+        IntEncodedValue intEnc = new IntEncodedValueImpl("my_int", 3, true);
+        EnumEncodedValue<RoadClass> enumEnc = RoadClass.create();
+        BooleanEncodedValue roadClassLincEnc = RoadClassLink.create();
+        ExternalBooleanEncodedValue externalEnc = new ExternalBooleanEncodedValue("my_ext", true);
+        EncodingManager encodingManager = EncodingManager.start()
+                .add(intEnc).add(enumEnc).add(roadClassLincEnc).add(externalEnc)
+                .build();
+        BaseGraph g = new BaseGraph.Builder(encodingManager).create();
+        g.edge(0, 1).set(intEnc, 5).set(enumEnc, RoadClass.BRIDLEWAY).set(roadClassLincEnc, true).set(externalEnc, false, true);
+        g.edge(1, 2).set(intEnc, 2).set(enumEnc, RoadClass.CYCLEWAY).set(roadClassLincEnc, false).set(externalEnc, false, true);
+        g.edge(2, 3).set(intEnc, 7).set(enumEnc, RoadClass.PRIMARY).set(roadClassLincEnc, true).set(externalEnc, true, false);
+        g.edge(3, 4).set(intEnc, 1).set(enumEnc, RoadClass.MOTORWAY).set(roadClassLincEnc, false).set(externalEnc, true, false);
+
+        NodeAccess na = g.getNodeAccess();
+        na.setNode(0, 50.00, 10.00);
+        na.setNode(1, 50.10, 10.10);
+        na.setNode(2, 50.20, 10.20);
+        na.setNode(3, 50.30, 10.30);
+        na.setNode(4, 50.40, 10.40);
+
+        LocationIndexTree locationIndex = new LocationIndexTree(g, g.getDirectory());
+        locationIndex.prepareIndex();
+
+        Snap snap1 = locationIndex.findClosest(50.05, 10.05, EdgeFilter.ALL_EDGES);
+        Snap snap2 = locationIndex.findClosest(50.35, 10.35, EdgeFilter.ALL_EDGES);
+
+        QueryGraph queryGraph = QueryGraph.create(g, snap1, snap2);
+        assertEquals(7, queryGraph.getNodes());
+        assertEquals(4, queryGraph.getBaseGraph().getEdges());
+        assertEquals(8, queryGraph.getVirtualEdges().size());
+
+        // fetching EVs from the virtual edge yields the values of the corresponding original edge
+        EdgeIteratorState virt05 = queryGraph.getEdgeIteratorState(4, 5);
+        assertFalse(queryGraph.getEdgeIteratorState(0, 1).get(externalEnc));
+        assertTrue(queryGraph.getEdgeIteratorState(0, 1).getReverse(externalEnc));
+        assertFalse(virt05.get(externalEnc));
+        assertTrue(virt05.getReverse(externalEnc));
+
+        assertEquals(RoadClass.MOTORWAY, queryGraph.getEdgeIteratorState(3, 4).get(enumEnc));
+        EdgeIteratorState virt64 = queryGraph.getEdgeIteratorState(7, 4);
+        assertEquals(6, virt64.getBaseNode());
+        assertEquals(4, virt64.getAdjNode());
+        assertEquals(RoadClass.MOTORWAY, virt64.get(enumEnc));
+        assertTrue(virt64.get(externalEnc));
+        assertFalse(virt64.getReverse(externalEnc));
+    }
+
+    @Test
+    public void directedKeyValues() {
+        NodeAccess na = g.getNodeAccess();
+        na.setNode(0, 1, 0);
+        na.setNode(1, 1, 2.5);
+        Map<String, KVStorage.KValue> kvs = new HashMap<>();
+        kvs.put("a", new KVStorage.KValue("hello", null));
+        kvs.put("b", new KVStorage.KValue(null, "world"));
+        EdgeIteratorState origEdge = g.edge(0, 1).setDistance(10).set(speedEnc, 60, 60).setKeyValues(kvs);
+
+        // keyValues List stays the same
+        assertEquals(origEdge.getKeyValues().toString(), origEdge.detach(true).getKeyValues().toString());
+        // determine if edge is reverse via origEdge.get(EdgeIteratorState.REVERSE_STATE)
+
+        // but getValue is sensitive to direction
+        assertEquals("hello", origEdge.getValue("a"));
+        assertNull(origEdge.detach(true).getValue("a"));
+        assertEquals("world", origEdge.detach(true).getValue("b"));
+        assertNull(origEdge.getValue("b"));
+
+        LocationIndexTree index = new LocationIndexTree(g, new RAMDirectory());
+        index.prepareIndex();
+        Snap snap = index.findClosest(1.01, 0.7, EdgeFilter.ALL_EDGES);
+        QueryGraph queryGraph = lookup(snap);
+        EdgeIteratorState edge0ToSnap = queryGraph.getEdgeIteratorState(1, 2);
+
+        assertEquals(edge0ToSnap.getKeyValues().toString(), edge0ToSnap.detach(true).getKeyValues().toString());
+
+        assertEquals("hello", edge0ToSnap.getValue("a"));
+        assertNull(edge0ToSnap.detach(true).getValue("a"));
+        assertEquals("world", edge0ToSnap.detach(true).getValue("b"));
+        assertNull(edge0ToSnap.getValue("b"));
+    }
+
+    @Test
+    void veryShortEdge() {
+        EdgeIteratorState e = g.edge(0, 1);
+        NodeAccess na = g.getNodeAccess();
+        na.setNode(0, 40.000_000, 6.000_000);
+        na.setNode(1, 40.000_000, 6.000_001);
+        double edgeDist = DIST_PLANE.calcDist(na.getLat(0), na.getLon(0), na.getLat(1), na.getLon(1));
+        // the edge is very short
+        assertEquals(0.085, edgeDist, 1.e-3);
+        double queryLat = 40.001_000;
+        double queryLon = 6.000_0009;
+        double queryTo0 = DIST_PLANE.calcDist(queryLat, queryLon, na.getLat(0), na.getLon(0));
+        double queryTo1 = DIST_PLANE.calcDist(queryLat, queryLon, na.getLat(1), na.getLon(1));
+        // the query point is relatively far away from the edge
+        assertEquals(111.1949530, queryTo0, 1.e-7);
+        assertEquals(111.1949269, queryTo1, 1.e-7);
+        GHPoint crossingPoint = DIST_PLANE.calcCrossingPointToEdge(queryLat, queryLon, na.getLat(0), na.getLon(0), na.getLat(1), na.getLon(1));
+        double distCrossingTo0 = DIST_PLANE.calcDist(crossingPoint.lat, crossingPoint.lon, na.getLat(0), na.getLon(0));
+        double distCrossingTo1 = DIST_PLANE.calcDist(crossingPoint.lat, crossingPoint.lon, na.getLat(1), na.getLon(1));
+        // ... but the crossing point is very close to both nodes of the edge
+        assertEquals(0.0766, distCrossingTo0, 1.e-4);
+        assertEquals(0.0085, distCrossingTo1, 1.e-4);
+        // ... and closer to node 1 than to node 0
+        assertTrue(distCrossingTo1 < distCrossingTo0);
+
+        LocationIndexTree index = new LocationIndexTree(g, new RAMDirectory());
+        index.prepareIndex();
+        Snap snap = index.findClosest(queryLat, queryLon, EdgeFilter.ALL_EDGES);
+        // Although this is technically an 'edge-snap', we snap to the tower node, because the **crossing** point
+        // is so close to a tower node (in our case it is even close to both tower nodes).
+        assertEquals(TOWER, snap.getSnappedPosition());
+        // We do not enforce that the closer of the two tower nodes is chosen. It does not really matter.
+        // Here it is node 0, because we first try the base node.
+        int closestNode = snap.getClosestNode();
+        assertEquals(0, closestNode);
+        // ... but what does matter is that the coordinates of the snapped point match the coordinates of the closest node!
+        // This isn't entirely obvious here, because `index.findClosest` first considers the snap an edge snap and only
+        // later updates it to a tower snap. See #3009
+        assertEquals(na.getLat(closestNode), snap.getSnappedPoint().getLat());
+        assertEquals(na.getLon(closestNode), snap.getSnappedPoint().getLon());
+        // also the distance should be correct
+        assertEquals(queryTo0, snap.getQueryDistance());
+        assertEquals(0, snap.getWayIndex());
+    }
+
     private QueryGraph lookup(Snap res) {
         return lookup(Collections.singletonList(res));
     }
@@ -992,5 +1119,4 @@ public class QueryGraphTest {
     private QueryGraph lookup(List<Snap> snaps) {
         return QueryGraph.create(g, snaps);
     }
-
 }

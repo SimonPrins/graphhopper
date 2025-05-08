@@ -23,10 +23,13 @@ import com.graphhopper.routing.ev.DecimalEncodedValue;
 import com.graphhopper.routing.weighting.AbstractWeighting;
 import com.graphhopper.routing.weighting.TurnCostProvider;
 import com.graphhopper.search.KVStorage.KeyValue;
+import com.graphhopper.routing.weighting.Weighting;
 import com.graphhopper.util.CustomModel;
 import com.graphhopper.util.EdgeIteratorState;
 import com.graphhopper.util.FetchMode;
 import com.graphhopper.util.PointList;
+
+import static com.graphhopper.routing.weighting.TurnCostProvider.NO_TURN_COST_PROVIDER;
 
 /**
  * The CustomWeighting allows adjusting the edge weights relative to those we'd obtain for a given base flag encoder.
@@ -73,7 +76,7 @@ import com.graphhopper.util.PointList;
  * calculated via the speed_factor is simply overwritten. Edges that are not accessible according to the access flags of
  * the base vehicle always get assigned an infinite weight and this cannot be changed (yet) using this weighting.
  */
-public final class CustomWeighting extends AbstractWeighting {
+public final class CustomWeighting implements Weighting {
     public static final String NAME = "custom";
 
     /**
@@ -81,20 +84,26 @@ public final class CustomWeighting extends AbstractWeighting {
      * costs or traffic light costs etc)
      */
     private final static double SPEED_CONV = 3.6;
-    private final double maxSpeed;
-    private final double maxPriority;
     private final double distanceInfluence;
     private final double headingPenaltySeconds;
     private final EdgeToDoubleMapping edgeToSpeedMapping;
     private final EdgeToDoubleMapping edgeToPriorityMapping;
+    private final TurnCostProvider turnCostProvider;
+    private final MaxCalc maxPrioCalc;
+    private final MaxCalc maxSpeedCalc;
 
-    public CustomWeighting(BooleanEncodedValue baseAccessEnc, DecimalEncodedValue baseSpeedEnc, TurnCostProvider turnCostProvider, Parameters parameters) {
-        super(baseAccessEnc, baseSpeedEnc, turnCostProvider);
+    public CustomWeighting(TurnCostProvider turnCostProvider, Parameters parameters) {
+        if (!Weighting.isValidName(getName()))
+            throw new IllegalStateException("Not a valid name for a Weighting: " + getName());
+        this.turnCostProvider = turnCostProvider;
+
         this.edgeToSpeedMapping = parameters.getEdgeToSpeedMapping();
+        this.maxSpeedCalc = parameters.getMaxSpeedCalc();
+
         this.edgeToPriorityMapping = parameters.getEdgeToPriorityMapping();
+        this.maxPrioCalc = parameters.getMaxPrioCalc();
+
         this.headingPenaltySeconds = parameters.getHeadingPenaltySeconds();
-        this.maxSpeed = parameters.getMaxSpeed() / SPEED_CONV;
-        this.maxPriority = parameters.getMaxPriority();
 
         // given unit is s/km -> convert to s/m
         this.distanceInfluence = parameters.getDistanceInfluence() / 1000.0;
@@ -103,8 +112,8 @@ public final class CustomWeighting extends AbstractWeighting {
     }
 
     @Override
-    public double getMinWeight(double distance) {
-        return distance / maxSpeed / maxPriority + distance * distanceInfluence;
+    public double calcMinWeightPerDistance() {
+        return 1d / (maxSpeedCalc.calcMax() / SPEED_CONV) / maxPrioCalc.calcMax() + distanceInfluence;
     }
 
     @Override
@@ -115,6 +124,9 @@ public final class CustomWeighting extends AbstractWeighting {
         //boolean log = Math.pow(points.get(0).getLat() - lat, 2) + Math.pow(points.get(0).getLon() - lon, 2) <= 0.00004 || Math.pow(points.get(points.size() - 1).getLat() - lat, 2) + Math.pow(points.get(points.size() - 1).getLon() - lon, 2) <= 0.00004;
         boolean log = false;
         
+        double priority = edgeToPriorityMapping.get(edgeState, reverse);
+        if (priority == 0) return Double.POSITIVE_INFINITY;
+
         final double distance = edgeState.getDistance();
         double seconds = calcSeconds(distance, edgeState, reverse);
         if (log) {
@@ -125,9 +137,6 @@ public final class CustomWeighting extends AbstractWeighting {
         if (edgeState.get(EdgeIteratorState.UNFAVORED_EDGE)) seconds += headingPenaltySeconds;
         double distanceCosts = distance * distanceInfluence;
         if (Double.isInfinite(distanceCosts)) return Double.POSITIVE_INFINITY;
-        double priority = edgeToPriorityMapping.get(edgeState, reverse);
-        // special case to avoid NaN for barrier edges (where time is often 0s)
-        if (priority == 0 && seconds == 0) return Double.POSITIVE_INFINITY;
         return seconds / priority + distanceCosts;
     }
 
@@ -150,8 +159,6 @@ public final class CustomWeighting extends AbstractWeighting {
                 return Double.POSITIVE_INFINITY;
             }
         }
-        if (speed > maxSpeed * SPEED_CONV)
-            throw new IllegalStateException("for " + getName() + " speed <= maxSpeed is violated, " + speed + " <= " + maxSpeed * SPEED_CONV);
         if (speed == 0)
             return Double.POSITIVE_INFINITY;
         if (speed < 0)
@@ -172,6 +179,21 @@ public final class CustomWeighting extends AbstractWeighting {
     }
 
     @Override
+    public double calcTurnWeight(int inEdge, int viaNode, int outEdge) {
+        return turnCostProvider.calcTurnWeight(inEdge, viaNode, outEdge);
+    }
+
+    @Override
+    public long calcTurnMillis(int inEdge, int viaNode, int outEdge) {
+        return turnCostProvider.calcTurnMillis(inEdge, viaNode, outEdge);
+    }
+
+    @Override
+    public boolean hasTurnCosts() {
+        return turnCostProvider != NO_TURN_COST_PROVIDER;
+    }
+
+    @Override
     public String getName() {
         return NAME;
     }
@@ -181,20 +203,26 @@ public final class CustomWeighting extends AbstractWeighting {
         double get(EdgeIteratorState edge, boolean reverse);
     }
 
+    @FunctionalInterface
+    public interface MaxCalc {
+        double calcMax();
+    }
+
     public static class Parameters {
         private final EdgeToDoubleMapping edgeToSpeedMapping;
         private final EdgeToDoubleMapping edgeToPriorityMapping;
-        private final double maxSpeed;
-        private final double maxPriority;
+        private final MaxCalc maxSpeedCalc;
+        private final MaxCalc maxPrioCalc;
         private final double distanceInfluence;
         private final double headingPenaltySeconds;
 
-        public Parameters(EdgeToDoubleMapping edgeToSpeedMapping, EdgeToDoubleMapping edgeToPriorityMapping,
-                          double maxSpeed, double maxPriority, double distanceInfluence, double headingPenaltySeconds) {
+        public Parameters(EdgeToDoubleMapping edgeToSpeedMapping, MaxCalc maxSpeedCalc,
+                          EdgeToDoubleMapping edgeToPriorityMapping, MaxCalc maxPrioCalc,
+                          double distanceInfluence, double headingPenaltySeconds) {
             this.edgeToSpeedMapping = edgeToSpeedMapping;
+            this.maxSpeedCalc = maxSpeedCalc;
             this.edgeToPriorityMapping = edgeToPriorityMapping;
-            this.maxSpeed = maxSpeed;
-            this.maxPriority = maxPriority;
+            this.maxPrioCalc = maxPrioCalc;
             this.distanceInfluence = distanceInfluence;
             this.headingPenaltySeconds = headingPenaltySeconds;
         }
@@ -207,8 +235,12 @@ public final class CustomWeighting extends AbstractWeighting {
             return edgeToPriorityMapping;
         }
 
-        public double getMaxSpeed() {
-            return maxSpeed;
+        public MaxCalc getMaxSpeedCalc() {
+            return maxSpeedCalc;
+        }
+
+        public MaxCalc getMaxPrioCalc() {
+            return maxPrioCalc;
         }
 
         public double getDistanceInfluence() {
@@ -217,10 +249,6 @@ public final class CustomWeighting extends AbstractWeighting {
 
         public double getHeadingPenaltySeconds() {
             return headingPenaltySeconds;
-        }
-
-        public double getMaxPriority() {
-            return maxPriority;
         }
     }
 }
