@@ -395,28 +395,25 @@ public class OSMReader {
                 way.setTag(key, overrideTags.get(way.getId()).get(key));
             }
         }
-        List<KVStorage.KeyValue> keyValues = way.getTag("key_values", Collections.emptyList());
+        Map<String, KVStorage.KValue> keyValues = way.getTag("key_values", Collections.emptyMap());
         boolean microcarSet = false;
         boolean highwaySet = false;
-        for (int i = 0; i < keyValues.size(); i++) {
-            if ("microcar".equals(keyValues.get(i).key))
+        for (String key : keyValues.keySet()) {
+            if ("microcar".equals(keyValues.get(key).getFwd()))
                 microcarSet = true;
-            if ("highway".equals(keyValues.get(i).key))
+            if ("highway".equals(keyValues.get(key).getFwd()))
                 highwaySet = true;
         }
         if (way.getId() == 60064634) {
             System.out.println("microcar: " + way.getTag("microcar"));
         }
-        //if (microcarSet && "yes".equals(way.getTag("microcar"))) {
-        //    System.out.println("[" + pointList.getLat(0) + "," + pointList.getLon(0) + "," + pointList.getLat(pointList.size() - 1) + "," + pointList.getLon(pointList.size() - 1) + "], //" + way.getId());
-        //}
         if (!microcarSet && ("yes".equals(way.getTag("microcar")) || overrideTags.containsKey(way.getId()))) {
-            keyValues.add(new KVStorage.KeyValue("microcar", way.getTag("microcar")));
+            keyValues.put("microcar",new KVStorage.KValue("microcar", way.getTag("microcar")));
             way.setTag("key_values", keyValues);
         }
         String highwayTag = way.getTag("highway");
         if (!highwaySet && highwayTag != null) {
-            keyValues.add(new KVStorage.KeyValue("highway", highwayTag));
+            keyValues.put("highway",new KVStorage.KValue("highway", highwayTag));
             way.setTag("key_values", keyValues);
         }
         

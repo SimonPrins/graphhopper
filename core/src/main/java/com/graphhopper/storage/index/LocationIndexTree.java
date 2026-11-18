@@ -322,20 +322,20 @@ public class LocationIndexTree implements LocationIndex {
                     traverseEdge(queryLat, queryLon, edgeIteratorState, (node, normedDist, wayIndex, pos) -> {
                         
                         double penalty = 0;
-                        for (KVStorage.KeyValue pair : edgeIteratorState.getKeyValues()) {
-                            if ("highway".equals(pair.getKey())) {
-                                if ("tertiary".equals(pair.getValue())
-                                        || "tertiary_link".equals(pair.getValue())
-                                        || "unclassified".equals(pair.getValue())
-                                        || "residential".equals(pair.getValue())
-                                        || "service".equals(pair.getValue())
-                                        || "track".equals(pair.getValue())
-                                        || "cycleway".equals(pair.getValue())
-                                        || "living_street".equals(pair.getValue())
+                        for (KVStorage.KValue pair : edgeIteratorState.getKeyValues().values()) {
+                            if ("highway".equals(pair.getFwd())) {
+                                if ("tertiary".equals(pair.getBwd())
+                                        || "tertiary_link".equals(pair.getBwd())
+                                        || "unclassified".equals(pair.getBwd())
+                                        || "residential".equals(pair.getBwd())
+                                        || "service".equals(pair.getBwd())
+                                        || "track".equals(pair.getBwd())
+                                        || "cycleway".equals(pair.getBwd())
+                                        || "living_street".equals(pair.getBwd())
                                     )
                                     penalty = 1E-12;
-                                else if ("secondary".equals(pair.getValue())
-                                        || "secondary_link".equals(pair.getValue())
+                                else if ("secondary".equals(pair.getBwd())
+                                        || "secondary_link".equals(pair.getBwd())
                                     )
                                     penalty = 5E-13;
                             }

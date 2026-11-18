@@ -20,9 +20,8 @@ package com.graphhopper.routing.weighting.custom;
 import com.graphhopper.routing.Router;
 import com.graphhopper.routing.ev.BooleanEncodedValue;
 import com.graphhopper.routing.ev.DecimalEncodedValue;
-import com.graphhopper.routing.weighting.AbstractWeighting;
 import com.graphhopper.routing.weighting.TurnCostProvider;
-import com.graphhopper.search.KVStorage.KeyValue;
+import com.graphhopper.search.KVStorage.KValue;
 import com.graphhopper.routing.weighting.Weighting;
 import com.graphhopper.util.CustomModel;
 import com.graphhopper.util.EdgeIteratorState;
@@ -148,14 +147,14 @@ public final class CustomWeighting implements Weighting {
         //if (Math.pow(points.get(0).getLat() - latCompare, 2) + Math.pow(points.get(0).getLon() - lonCompare, 2) <= 0.001)
             //System.out.println("[" + points.get(0).getLat() + "," + points.get(0).getLon()+ "," + points.get(points.size() - 1).getLat()+ "," + points.get(points.size() - 1).getLon() + "], //" + edgeState.getName());
             //System.out.println("Considering edge: " + edgeState.getEdgeKey() + " (" + points.get(0).getLat() + "," + points.get(0).getLon() + ")" + edgeState.getName());
-        if (reverse ? !edgeState.getReverse(accessEnc) : !edgeState.get(accessEnc))
-            return Double.POSITIVE_INFINITY;
+        //if (reverse ? !edgeState.getReverse(accessEnc) : !edgeState.get(accessEnc))
+        //    return Double.POSITIVE_INFINITY;
 
         double speed = edgeToSpeedMapping.get(edgeState, reverse);
         if (Router.avoidEdgeKeys.contains(edgeState.getEdge()))
             return Double.POSITIVE_INFINITY;
-        for (KeyValue pair : edgeState.getKeyValues()) {
-            if ("microcar".equals(pair.getKey()) && "no".equals(pair.getValue())) {
+        for (KValue pair : edgeState.getKeyValues().values()) {
+            if ("microcar".equals(pair.getFwd()) && "no".equals(pair.getBwd())) {
                 return Double.POSITIVE_INFINITY;
             }
         }

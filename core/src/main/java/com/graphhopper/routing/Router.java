@@ -51,7 +51,7 @@ import com.graphhopper.util.shapes.GHPoint;
 
 import java.util.*;
 
-import com.graphhopper.search.KVStorage.KeyValue;
+import com.graphhopper.search.KVStorage.KValue;
 import com.graphhopper.storage.index.LocationIndexTree;
 import static com.graphhopper.util.DistanceCalcEarth.DIST_EARTH;
 import static com.graphhopper.util.Parameters.Algorithms.ALT_ROUTE;
@@ -380,8 +380,8 @@ public class Router {
         if (lat != 0 && lon != 0) {
             Snap avoidSnap = ((LocationIndexTree)locationIndex).findClosestPreferringLargeRoads(lat, lon, solver.createSnapFilter());
             boolean allowMicrocars = false;
-            for (KeyValue pair : avoidSnap.getClosestEdge().getKeyValues()) {
-                if ("microcar".equals(pair.getKey()) && "yes".equals(pair.getValue())) {
+            for (KValue pair : avoidSnap.getClosestEdge().getKeyValues().values()) {
+                if ("microcar".equals(pair.getFwd()) && "yes".equals(pair.getBwd())) {
                     allowMicrocars = true;
                 }
             }

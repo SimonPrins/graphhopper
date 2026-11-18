@@ -30,9 +30,9 @@ graphhopper:
 
   profiles:
    - name: car
-#     turn_costs:
-#       vehicle_types: [motorcar, motor_vehicle]
-#       u_turn_costs: 60
+     turn_costs:
+       vehicle_types: [motorcar, motor_vehicle]
+       u_turn_costs: 60
 #     for more advanced turn costs, see #2957 or bike_tc.yml
      custom_model_files: [car.json]
 
